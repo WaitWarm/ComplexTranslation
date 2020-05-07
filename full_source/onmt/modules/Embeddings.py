@@ -49,32 +49,55 @@ class ComplexPositionEncoding(nn.Module):
     def __init__(self, dropout, dim, max_len=5000):
         # phase = torch.empty(max_len, dim)
         # torch.nn.init.xavier_uniform_(phase)
-        # self.position = torch.arange(1., max_len + 1).unsqueeze(1)
+        self.position = torch.arange(1., max_len + 1).unsqueeze(1)
         # self.co = torch.cos(weight * position + phase).cuda()
         # self.sin = torch.sin(weight * position + phase).cuda()
         super(ComplexPositionEncoding, self).__init__()
-        position = torch.empty(1000, dim)
+        # position = torch.empty(1000, dim)
         # nn.init.constant_(position, numpy.pi / 4)
-        self.position_weight = nn.Parameter(position)
-        self.weight = nn.Parameter(torch.empty(2 * dim, dim))
+        # self.position_weight = nn.Parameter(torch.empty(30000, dim))
+        # self.position_weight_s = nn.Embedding(1000, dim)
+        # self.position_weight = nn.Embedding(1000, dim)
+        # self.weight = nn.Parameter(torch.empty(2 * dim, dim))
         # torch.nn.init.xavier_uniform_(self.position_weight)
         # nn.init.uniform_(self.weight)
         # self.register_buffer('co', co)
         # self.register_buffer('sin', sin)
         # nn.init.constant_(self.position_weight, 3)
+        # pe = torch.zeros(max_len, dim)
+        position = torch.arange(1., max_len+1).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0., dim, 1) *
+                             -(math.log(10000.0) / dim))
+        wposition = position * div_term
+        wposition = wposition.unsqueeze(1)
+        self.register_buffer('wposition',  wposition)
         self.dropout = nn.Dropout(p=dropout)
         self.dim = dim
 
     def forward(self, emb):
-        co = torch.cos(self.position_weight)
-        sin = torch.sin(self.position_weight)
+        # co = torch.cos(self.position_weight)
+        # sin = torch.sin(self.position_weight)
         out_length, out_batch, emb_size = emb.size()
+        # a = torch.LongTensor([0])
         emb = emb * math.sqrt(self.dim)
-        emb_real = emb.mul(co[:emb.size(0)].unsqueeze(1).expand(out_length, out_batch, emb_size))
-        emb_imag = emb.mul(sin[:emb.size(0)].unsqueeze(1).expand(out_length, out_batch, emb_size))
-        emb = torch.cat((emb_real, emb_imag), dim=2)
-        emb = torch.matmul(emb, self.weight)
-        emb = self.dropout(emb)
+        # emb_real = emb.mul(co[:emb.size(0)].unsqueeze(1).expand(out_length, out_batch, emb_size))
+        # emb_imag = emb.mul(sin[:emb.size(0)].unsqueeze(1).expand(out_length, out_batch, emb_size))
+        # imag = torch.arange(0, float(emb.size(0)), step=1)
+        # s=self.position_weight_s.weight
+        cos = torch.cos(self.wposition[:emb.size(0)])
+        sin = torch.sin(self.wposition[:emb.size(0)])
+        # emb_img = self.position_weight[:emb.size(0)].unsqueeze(1).expand(out_length, out_batch, emb_size)
+        emb_img = emb.mul(sin)
+        emb_real = emb.mul(cos)
+        emb_real = self.dropout(emb)
+        judge_zero = torch.zeros_like(emb_real)
+        judge_one = torch.ones_like(emb_real)
+        judge_real = torch.where(emb_real != 0, judge_one, judge_zero)
+        # judge_real = torch.where(judge_real, 1, 0)
+        # emb_img = emb_img.mul(judge_real)
+        emb = torch.cat((emb_real, emb_img), dim=2)
+        # emb = torch.matmul(emb, self.weight)
+        # emb = self.dropout(emb)
         return emb
 
 
@@ -125,7 +148,7 @@ class Embeddings(nn.Module):
                  word_vocab_size,
                  word_padding_idx,
                  position_encoding=False,
-                 complex_encoding=False,
+                 only_complex_encoding=False,
                  feat_merge="concat",
                  feat_vec_exponent=0.7, feat_vec_size=-1,
                  feat_padding_idx=[],
@@ -156,8 +179,12 @@ class Embeddings(nn.Module):
         # The embedding matrix look-up tables. The first look-up table
         # is for words. Subsequent ones are for features, if any exist.
         emb_params = zip(vocab_sizes, emb_dims, pad_indices)
-        embeddings = [nn.Embedding(vocab, dim, padding_idx=pad, sparse=sparse)
-                      for vocab, dim, pad in emb_params]
+        if only_complex_encoding:
+            embeddings = [nn.Embedding(vocab, int(dim/2), padding_idx=pad, sparse=sparse)
+                        for vocab, dim, pad in emb_params]
+        else:
+            embeddings = [nn.Embedding(vocab, dim, padding_idx=pad, sparse=sparse)
+                for vocab, dim, pad in emb_params]
         emb_luts = Elementwise(feat_merge, embeddings)
 
         # The final output size of word + feature vectors. This can vary
@@ -186,10 +213,9 @@ class Embeddings(nn.Module):
             pe = PositionalEncoding(dropout, self.embedding_size)
             self.make_embedding.add_module('pe', pe)
 
-        if complex_encoding:
-            ce = ComplexPositionEncoding(dropout, self.embedding_size)
+        if only_complex_encoding:
+            ce = ComplexPositionEncoding(dropout, int(self.embedding_size/2))
             self.make_embedding.add_module('ce', ce)
-
 
     @property
     def word_lut(self):
@@ -229,6 +255,7 @@ class Embeddings(nn.Module):
         out_length, out_batch, emb_size = emb.size()
         aeq(in_length, out_length)
         aeq(in_batch, out_batch)
-        aeq(emb_size, self.embedding_size)
+        # aeq(emb_size, self.embedding_size)
 
         return emb
+
